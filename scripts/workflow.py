@@ -52,7 +52,19 @@ def call_llm(messages: list, temperature: float = 0.4) -> str:
             messages=messages,
             temperature=temperature,
         )
-        return resp.choices[0].message.content.strip()
+        content = resp.choices[0].message.content.strip()
+        # 去掉 LLM 常见废话前缀
+        for prefix in ["当然可以！", "当然！", "好的！", "好的，", "以下是", "如下："]:
+            if content.startswith(prefix):
+                # 找到第一个实质内容行
+                lines = content.split("\n")
+                for i, line in enumerate(lines):
+                    if line.strip() and not any(line.startswith(p) for p in
+                       ["当然", "好的", "以下是", "如下", "---", "这是"]):
+                        content = "\n".join(lines[i:]).strip()
+                        break
+                break
+        return content
     except Exception as e:
         print(f"  [LLM错误] {e}")
         return ""

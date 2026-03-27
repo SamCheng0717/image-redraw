@@ -102,16 +102,22 @@ def render_card(text: str, title: str = "", filename: str = None,
 
     # ── 预处理文字 ──
     max_chars = (W - CARD_MARGIN * 2 - CARD_PAD_H * 2) // 27
+    MAX_LINES = 28  # 超出自动截断，避免卡片过长
     lines = []
     for para in text.strip().split("\n"):
         para = para.strip().lstrip("#").strip()
         if not para:
             lines.append("")
             continue
-        # 去掉 Markdown 粗体符号
+        # 去掉 Markdown 粗体/分隔线
         para = re.sub(r'\*\*(.+?)\*\*', r'\1', para)
+        if para.startswith("---"):
+            continue
         for wrapped in textwrap.wrap(para, width=max_chars) or [""]:
             lines.append(wrapped)
+        if len(lines) >= MAX_LINES:
+            lines.append("…")
+            break
 
     # ── 计算高度 ──
     line_h = 30
