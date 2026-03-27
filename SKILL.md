@@ -27,9 +27,12 @@ python <skill_path>/scripts/workflow.py --input notes_韩国医美.md
 
 处理完后输出每篇文案的 MD 文件路径和推荐预设。
 
-## Step 2：在 Claude Code 中生成图片
+## Step 2：调用 baoyu-xhs-images 技能生成图片
+
+使用 `baoyu-xhs-images` 技能，传入改写后的 MD 文件和推荐预设：
 
 ```
+# Claude Code 环境
 /baoyu-xhs-images <output_file> --preset <preset>
 ```
 

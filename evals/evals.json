@@ -5,7 +5,7 @@
       "id": 0,
       "name": "workflow-guide",
       "prompt": "我刚用 douyin-scraper 抓了一批韩国医美的笔记，output 目录下有 notes_韩国医美.md，我想把这些改成小红书图文发出去",
-      "expected_output": "清晰说明两步流程：先在终端运行 workflow.py，再在 Claude Code 中运行 /baoyu-xhs-images；告知需要配置 DASHSCOPE_API_KEY",
+      "expected_output": "清晰说明两步流程：先在终端运行 workflow.py，再调用 baoyu-xhs-images 技能生成图片；告知需要配置 DASHSCOPE_API_KEY",
       "files": [],
       "assertions": [
         {
@@ -22,7 +22,7 @@
         },
         {
           "id": "mentions_two_steps",
-          "description": "清楚区分两个步骤（终端 + Claude Code）",
+          "description": "清楚区分两个步骤（终端 + Agent 调用）",
           "type": "contains_keyword",
           "keywords": ["终端", "Step", "步骤"]
         },

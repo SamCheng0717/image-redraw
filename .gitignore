@@ -3,3 +3,4 @@ output/
 xhs-images/
 __pycache__/
 *.pyc
+config/whitepaper.md
