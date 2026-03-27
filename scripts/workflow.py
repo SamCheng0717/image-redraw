@@ -2,11 +2,17 @@
 # -*- coding: utf-8 -*-
 """
 image-redraw workflow
+
+两条路：
+  无医院信息 → LLM 二创 → 生成精美图片
+  有医院信息 → 告知用户 → 用户指定替换 → LLM + 白皮书改写 → 生成精美图片
+
 用法：
     python scripts/workflow.py --input notes_韩国医美.md
-    python scripts/workflow.py --input notes_韩国医美.md --my-hospital "我的诊所"
+    python scripts/workflow.py --input notes_韩国医美.md --whitepaper config/whitepaper.md
 """
 import argparse
+import json
 import os
 import re
 import sys
@@ -22,65 +28,19 @@ try:
 except ImportError:
     pass
 
-# ─────────────────── 医院关键词 ────────────────────
-HOSPITAL_KEYWORDS = [
-    "医院", "诊所", "皮肤科", "整形", "医美", "门诊",
-    "pfk", "PFK", "江南", "弘大", "纯真", "OLIVE",
-    "jayjun", "bb皮肤", "弗洛雷斯", "萤仁齐",
-    "院长", "主治医", "专科",
-]
-
-HOSPITAL_PAT = re.compile(
-    r"(" + "|".join(re.escape(k) for k in HOSPITAL_KEYWORDS) + r")",
-    re.IGNORECASE
-)
+SCRIPT_DIR = Path(__file__).parent
+CONFIG_DIR = SCRIPT_DIR.parent / "config"
+OUTPUT_DIR = SCRIPT_DIR.parent / "output"
+OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def detect_hospital(text: str) -> list:
-    """返回文本中检测到的医院相关词列表（去重）"""
-    matches = HOSPITAL_PAT.findall(text)
-    return list(dict.fromkeys(matches))  # 保序去重
+# ─────────────────── LLM 调用 ────────────────────
 
-
-# ─────────────────── 解析 Markdown ────────────────────
-def parse_notes_md(md_path: Path) -> list:
-    """解析 douyin-scraper 输出的 Markdown，返回笔记列表"""
-    text = md_path.read_text(encoding="utf-8")
-    notes = []
-
-    # 按 ## 笔记 N 分割
-    blocks = re.split(r'\n(?=## 笔记 \d+)', text)
-    for block in blocks:
-        if not block.strip().startswith("## 笔记"):
-            continue
-        note = {}
-
-        # 标题
-        m = re.search(r'## 笔记 \d+ — (.+)', block)
-        note["title"] = m.group(1).strip() if m else ""
-
-        # 链接
-        m = re.search(r'\*\*🔗 链接\*\*：(https?://\S+)', block)
-        note["url"] = m.group(1).strip() if m else ""
-
-        # OCR 内容
-        m = re.search(r'### 🔍 OCR 识别内容\n+([\s\S]+?)(?=\n###|\n---|\Z)', block)
-        note["ocr"] = m.group(1).strip() if m else ""
-
-        if note["ocr"]:
-            notes.append(note)
-
-    return notes
-
-
-# ─────────────────── LLM 改写 ────────────────────
-def rewrite_with_llm(text: str, instruction: str) -> str:
-    """用 Qwen 改写文本"""
+def call_llm(messages: list, temperature: float = 0.4) -> str:
     api_key = os.getenv("DASHSCOPE_API_KEY")
     if not api_key:
-        print("  [警告] 未配置 DASHSCOPE_API_KEY，跳过 LLM 改写")
-        return text
-
+        print("  [错误] 未配置 DASHSCOPE_API_KEY")
+        return ""
     try:
         from openai import OpenAI
         client = OpenAI(
@@ -89,24 +49,111 @@ def rewrite_with_llm(text: str, instruction: str) -> str:
         )
         resp = client.chat.completions.create(
             model="qwen-plus",
-            messages=[
-                {"role": "system", "content": "你是一个内容编辑助手，帮助改写医美内容文案。保持原有格式和结构，只修改指定内容。"},
-                {"role": "user", "content": f"{instruction}\n\n原文：\n{text}"}
-            ],
-            temperature=0.3,
+            messages=messages,
+            temperature=temperature,
         )
         return resp.choices[0].message.content.strip()
     except Exception as e:
         print(f"  [LLM错误] {e}")
-        return text
+        return ""
 
 
-# ─────────────────── 主流程 ────────────────────
-def process_note(note: dict, idx: int, my_hospital: str, auto: bool) -> dict:
-    """处理单篇笔记，返回处理结果"""
-    title = note["title"][:40]
+# ─────────────────── 医院提取 ────────────────────
+
+def extract_hospitals(text: str) -> list:
+    """用 LLM 从文本中提取医院/诊所/医美机构名称"""
+    result = call_llm([
+        {"role": "system", "content": (
+            "你是信息提取助手。从用户提供的文本中，提取所有医院、诊所、皮肤科、"
+            "医美机构的名称（包括中文名、英文简称、缩写）。"
+            "以 JSON 数组格式返回，例如：[\"pfk\", \"江南bb\", \"弗洛雷斯\"]。"
+            "如果没有任何医疗机构名称，返回空数组：[]"
+        )},
+        {"role": "user", "content": text}
+    ], temperature=0.1)
+
+    # 解析 JSON
+    try:
+        match = re.search(r'\[.*?\]', result, re.DOTALL)
+        if match:
+            hospitals = json.loads(match.group())
+            return [h.strip() for h in hospitals if h.strip()]
+    except Exception:
+        pass
+    return []
+
+
+# ─────────────────── 二创（无医院）────────────────────
+
+def rewrite_creative(text: str) -> str:
+    """无医院信息时，二创改写，使内容更适合社交媒体传播"""
+    return call_llm([
+        {"role": "system", "content": (
+            "你是一位擅长医美内容创作的小红书博主。"
+            "将用户提供的内容进行二次创作：保留核心干货，"
+            "语气更亲切活泼，加入适当的表情符号，"
+            "优化段落排版，使其更适合在小红书/微信等平台传播。"
+            "保持原有信息的准确性，不要添加不实内容。"
+        )},
+        {"role": "user", "content": f"请对以下内容进行二创：\n\n{text}"}
+    ])
+
+
+# ─────────────────── 改写（有医院）────────────────────
+
+def rewrite_with_replacement(text: str, replacements: dict, whitepaper: str) -> str:
+    """有医院信息时，按替换表改写，并注入白皮书知识"""
+    replacement_desc = "、".join([f"「{k}」→「{v}」" for k, v in replacements.items()])
+
+    if whitepaper:
+        system_prompt = (
+            "你是一位医美内容编辑。根据以下替换规则改写文案，"
+            "将竞品机构名称替换为指定机构，并结合机构白皮书，"
+            "在适当位置自然地融入替换后机构的相关优势或特色介绍（1-2句即可，不要过度推销）。"
+            "保持原文整体结构和风格。\n\n"
+            f"【机构白皮书】\n{whitepaper}"
+        )
+        user_content = f"替换规则：{replacement_desc}\n\n原文：\n{text}"
+    else:
+        system_prompt = (
+            "你是一位医美内容编辑。根据替换规则改写文案，"
+            "将竞品机构名称替换为指定机构名称，"
+            "使替换后的文案读起来自然流畅，保持原文结构和风格。"
+        )
+        user_content = f"替换规则：{replacement_desc}\n\n原文：\n{text}"
+
+    return call_llm([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content}
+    ])
+
+
+# ─────────────────── 解析 Markdown ────────────────────
+
+def parse_notes_md(md_path: Path) -> list:
+    text = md_path.read_text(encoding="utf-8")
+    notes = []
+    blocks = re.split(r'\n(?=## 笔记 \d+)', text)
+    for block in blocks:
+        if not block.strip().startswith("## 笔记"):
+            continue
+        note = {}
+        m = re.search(r'## 笔记 \d+ — (.+)', block)
+        note["title"] = m.group(1).strip() if m else ""
+        m = re.search(r'\*\*🔗 链接\*\*：(https?://\S+)', block)
+        note["url"] = m.group(1).strip() if m else ""
+        m = re.search(r'### 🔍 OCR 识别内容\n+([\s\S]+?)(?=\n###|\n---|\Z)', block)
+        note["ocr"] = m.group(1).strip() if m else ""
+        if note["ocr"]:
+            notes.append(note)
+    return notes
+
+
+# ─────────────────── 处理单篇笔记 ────────────────────
+
+def process_note(note: dict, idx: int, whitepaper: str) -> dict:
+    title = note["title"][:50]
     ocr = note["ocr"]
-    hospitals = detect_hospital(ocr)
 
     print(f"\n{'='*60}")
     print(f"笔记 {idx}: {title}")
@@ -119,103 +166,74 @@ def process_note(note: dict, idx: int, my_hospital: str, auto: bool) -> dict:
         "url": note["url"],
         "original_ocr": ocr,
         "final_text": ocr,
-        "action": "direct",   # direct / rewrite / skip
+        "action": "direct",
         "image_path": None,
     }
 
-    if not hospitals:
-        print("  ✅ 未检测到医院信息 → 可直接转发")
-        result["action"] = "direct"
+    # ── Step 1: 提取医院信息 ──
+    print("  [分析] 正在检测医院/机构信息...")
+    hospitals = extract_hospitals(ocr)
 
-        if not auto:
-            choice = input("  是否生成图片？[y/N] ").strip().lower()
-            if choice != "y":
-                return result
+    if not hospitals:
+        # ── 无医院 → 二创 ──
+        print("  ✅ 未检测到医院信息")
+        print("  ✍️  正在二创改写...")
+        rewritten = rewrite_creative(ocr)
+        if rewritten:
+            result["final_text"] = rewritten
+            result["action"] = "二创"
+            print("  改写预览：")
+            for line in rewritten.split("\n")[:6]:
+                if line.strip():
+                    print(f"    {line}")
+            print()
+        else:
+            print("  [警告] 二创失败，使用原文")
+
     else:
-        print(f"  ⚠️  检测到医院/机构信息：{', '.join(hospitals)}")
+        # ── 有医院 → 用户指定替换 ──
+        print(f"  ⚠️  检测到医院/机构：{', '.join(f'「{h}」' for h in hospitals)}")
         print()
         print("  原文预览：")
-        for line in ocr.split("\n")[:8]:
+        for line in ocr.split("\n")[:6]:
             if line.strip():
                 print(f"    {line}")
         print()
 
-        if auto:
-            choice = "1"
+        # 逐个询问替换
+        replacements = {}
+        print("  请为每个机构指定替换名称（直接回车跳过不替换）：")
+        for h in hospitals:
+            target = input(f"    「{h}」 → ").strip()
+            if target:
+                replacements[h] = target
+
+        if not replacements:
+            print("  ➡️  未指定替换，进行二创改写...")
+            rewritten = rewrite_creative(ocr)
+            result["final_text"] = rewritten or ocr
+            result["action"] = "二创（无替换）"
         else:
-            print("  请选择操作：")
-            print("  [1] 替换医院信息并改写文案")
-            print("  [2] 只修改部分文字（自定义指令）")
-            print("  [3] 直接转发（不改）")
-            print("  [4] 跳过")
-            choice = input("  选择 [1/2/3/4]: ").strip()
-
-        if choice == "4":
-            result["action"] = "skip"
-            print("  ⏭️  已跳过")
-            return result
-
-        elif choice == "3":
-            result["action"] = "direct"
-            print("  ➡️  直接转发，生成图片...")
-
-        elif choice == "1":
-            result["action"] = "rewrite"
-            hospital_info = my_hospital
-            if not hospital_info and not auto:
-                hospital_info = input("  请输入你的医院/诊所名称及简介（回车跳过）：").strip()
-
-            if hospital_info:
-                instruction = (
-                    f"将文中所有竞品医院/机构名称（{', '.join(hospitals)}）"
-                    f"替换为「{hospital_info}」，"
-                    f"保持文章结构和风格，语言自然流畅。"
-                )
-            else:
-                instruction = (
-                    f"将文中所有竞品医院/机构名称（{', '.join(hospitals)}）"
-                    f"改为「某知名医院」，保持结构和风格。"
-                )
-
-            print("  ✍️  正在改写...")
-            rewritten = rewrite_with_llm(ocr, instruction)
-
-            print("\n  改写结果预览：")
-            for line in rewritten.split("\n")[:10]:
-                if line.strip():
-                    print(f"    {line}")
             print()
-
-            if not auto:
-                confirm = input("  确认使用此改写结果？[Y/n] ").strip().lower()
-                if confirm == "n":
-                    custom = input("  请输入自定义修改指令（或直接粘贴修改后的文本）：\n  > ").strip()
-                    if custom:
-                        if len(custom) > 50:
-                            rewritten = custom
-                        else:
-                            rewritten = rewrite_with_llm(ocr, custom)
-
-            result["final_text"] = rewritten
-
-        elif choice == "2":
-            result["action"] = "rewrite"
-            if not auto:
-                instruction = input("  请输入修改指令：\n  > ").strip()
+            if whitepaper:
+                print("  📄 使用白皮书生成机构介绍...")
             else:
-                instruction = "优化文案，使其更适合社交媒体传播"
+                print("  ✍️  正在改写（无白皮书）...")
+            rewritten = rewrite_with_replacement(ocr, replacements, whitepaper)
+            if rewritten:
+                result["final_text"] = rewritten
+                result["action"] = "替换改写"
+                print("  改写预览：")
+                for line in rewritten.split("\n")[:8]:
+                    if line.strip():
+                        print(f"    {line}")
+                print()
+            else:
+                print("  [警告] 改写失败，使用原文")
 
-            print("  ✍️  正在改写...")
-            rewritten = rewrite_with_llm(ocr, instruction)
-            result["final_text"] = rewritten
-
-    # ── 生成图片 ──
-    try:
-        from render import render_card
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from render import render_card
-
+    # ── Step 2: 生成图片 ──
+    sys.path.insert(0, str(SCRIPT_DIR))
+    from render import render_card
     filename = f"note_{idx:02d}_{datetime.now().strftime('%H%M%S')}.png"
     img_path = render_card(
         text=result["final_text"],
@@ -228,42 +246,39 @@ def process_note(note: dict, idx: int, my_hospital: str, auto: bool) -> dict:
     return result
 
 
-def generate_report(results: list, output_dir: Path) -> Path:
-    """生成发布清单 Markdown"""
+# ─────────────────── 发布清单 ────────────────────
+
+def generate_report(results: list) -> Path:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [
         "# 发布清单", "",
         f"生成时间：{ts}", "",
-        f"共 {len(results)} 篇，"
-        f"可直接转发：{sum(1 for r in results if r['action']=='direct')} 篇，"
-        f"已改写：{sum(1 for r in results if r['action']=='rewrite')} 篇，"
-        f"已跳过：{sum(1 for r in results if r['action']=='skip')} 篇",
+        f"共 {len(results)} 篇 | "
+        f"二创：{sum(1 for r in results if '二创' in r['action'])} | "
+        f"替换改写：{sum(1 for r in results if r['action']=='替换改写')}",
         "", "---",
     ]
-
     for r in results:
-        status = {"direct": "✅ 直接转发", "rewrite": "✏️ 已改写", "skip": "⏭️ 跳过"}[r["action"]]
         lines += [
             f"\n## {r['idx']}. {r['title']}",
-            f"**状态**：{status}",
+            f"**操作**：{r['action']}",
             f"**链接**：{r['url']}",
         ]
         if r["image_path"]:
             lines.append(f"**图片**：`{r['image_path']}`")
-        if r["action"] == "rewrite":
-            lines += ["", "**改写后文案**：", "", r["final_text"]]
-        lines.append("\n---")
+        lines += ["", "**改写后文案**：", "", r["final_text"], "\n---"]
 
-    report_path = output_dir / f"publish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
-    report_path.write_text("\n".join(lines), encoding="utf-8")
-    return report_path
+    path = OUTPUT_DIR / f"publish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
+
+# ─────────────────── 入口 ────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="内容分析 + 改写 + 生成图片")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True, help="douyin-scraper 输出的 Markdown 文件")
-    parser.add_argument("--my-hospital", default="", help="你的医院/诊所名称")
-    parser.add_argument("--auto", action="store_true", help="自动模式（无交互，有医院信息自动替换）")
+    parser.add_argument("--whitepaper", default="", help="白皮书 Markdown 文件路径（可选）")
     args = parser.parse_args()
 
     md_path = Path(args.input)
@@ -271,29 +286,32 @@ def main():
         print(f"[错误] 文件不存在：{args.input}")
         sys.exit(1)
 
+    # 加载白皮书
+    whitepaper = ""
+    wp_path = Path(args.whitepaper) if args.whitepaper else CONFIG_DIR / "whitepaper.md"
+    if wp_path.exists():
+        whitepaper = wp_path.read_text(encoding="utf-8")
+        print(f"[白皮书] 已加载：{wp_path.name}")
+    else:
+        print("[白皮书] 未配置，将在替换时不添加机构介绍")
+
     print(f"[读取] {md_path.name}")
     notes = parse_notes_md(md_path)
     if not notes:
-        print("[警告] 未解析到任何笔记（检查文件格式）")
+        print("[错误] 未解析到笔记")
         sys.exit(1)
 
-    print(f"[发现] {len(notes)} 篇笔记，开始处理...\n")
+    print(f"[发现] {len(notes)} 篇笔记\n")
 
-    output_dir = Path(__file__).parent.parent / "output"
-    output_dir.mkdir(exist_ok=True)
     results = []
-
     for i, note in enumerate(notes, 1):
-        result = process_note(note, i, args.my_hospital, args.auto)
+        result = process_note(note, i, whitepaper)
         results.append(result)
 
-    report_path = generate_report(results, output_dir)
-
+    report = generate_report(results)
     print(f"\n{'='*60}")
-    print(f"✓ 完成！")
-    print(f"  处理笔记：{len(results)} 篇")
-    print(f"  生成图片：{sum(1 for r in results if r['image_path'])} 张")
-    print(f"  发布清单：{report_path}")
+    print(f"✓ 完成！共 {len(results)} 篇，图片 {sum(1 for r in results if r['image_path'])} 张")
+    print(f"发布清单：{report}")
     print(f"{'='*60}")
 
 
