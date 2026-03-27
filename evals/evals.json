@@ -1,0 +1,98 @@
+{
+  "skill_name": "image-redraw",
+  "evals": [
+    {
+      "id": 0,
+      "name": "workflow-guide",
+      "prompt": "我刚用 douyin-scraper 抓了一批韩国医美的笔记，output 目录下有 notes_韩国医美.md，我想把这些改成小红书图文发出去",
+      "expected_output": "清晰说明两步流程：先在终端运行 workflow.py，再在 Claude Code 中运行 /baoyu-xhs-images；告知需要配置 DASHSCOPE_API_KEY",
+      "files": [],
+      "assertions": [
+        {
+          "id": "mentions_workflow_py",
+          "description": "提到 workflow.py 需要在终端运行",
+          "type": "contains_keyword",
+          "keywords": ["workflow.py"]
+        },
+        {
+          "id": "mentions_baoyu_xhs_images",
+          "description": "提到 /baoyu-xhs-images 命令",
+          "type": "contains_keyword",
+          "keywords": ["baoyu-xhs-images"]
+        },
+        {
+          "id": "mentions_two_steps",
+          "description": "清楚区分两个步骤（终端 + Claude Code）",
+          "type": "contains_keyword",
+          "keywords": ["终端", "Step", "步骤"]
+        },
+        {
+          "id": "mentions_dashscope_key",
+          "description": "提到需要配置 DASHSCOPE_API_KEY",
+          "type": "contains_keyword",
+          "keywords": ["DASHSCOPE_API_KEY", "API Key", "API key"]
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "name": "hospital-replace",
+      "prompt": "帮我看看这份笔记，里面有提到 pfk 和弗洛雷斯诊所，我想替换成我们自己的机构凯丽雅，同时用白皮书生成介绍",
+      "expected_output": "说明 workflow.py 会自动检测医院名称、交互式询问替换；说明白皮书配置路径 config/whitepaper.md；说明有白皮书时 LLM 会自然融入机构介绍",
+      "files": [],
+      "assertions": [
+        {
+          "id": "mentions_auto_detect",
+          "description": "提到 workflow.py 会自动检测/提取医院名",
+          "type": "contains_keyword",
+          "keywords": ["自动检测", "自动提取", "LLM", "检测"]
+        },
+        {
+          "id": "mentions_interactive_input",
+          "description": "提到交互式询问替换关系",
+          "type": "contains_keyword",
+          "keywords": ["交互", "询问", "输入", "终端"]
+        },
+        {
+          "id": "mentions_whitepaper_path",
+          "description": "提到 config/whitepaper.md 路径",
+          "type": "contains_keyword",
+          "keywords": ["whitepaper", "白皮书", "config/"]
+        },
+        {
+          "id": "mentions_workflow_py",
+          "description": "提到通过 workflow.py 执行",
+          "type": "contains_keyword",
+          "keywords": ["workflow.py"]
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "preset-recommend",
+      "prompt": "这是一段避坑攻略的文案：'千万别在没做功课之前就去做热玛吉，这3个坑我替你踩过了...' 应该怎么生成图片，用哪个风格比较好？",
+      "expected_output": "推荐 warning 预设（bold + list 风格），说明理由；给出 /baoyu-xhs-images 命令示例",
+      "files": [],
+      "assertions": [
+        {
+          "id": "recommends_warning",
+          "description": "推荐 warning 预设",
+          "type": "contains_keyword",
+          "keywords": ["warning"]
+        },
+        {
+          "id": "explains_bold_list",
+          "description": "解释 bold 或 list 风格适合避坑内容",
+          "type": "contains_keyword",
+          "keywords": ["bold", "list", "避坑", "警示"]
+        },
+        {
+          "id": "gives_command_example",
+          "description": "给出 /baoyu-xhs-images 命令示例",
+          "type": "contains_keyword",
+          "keywords": ["baoyu-xhs-images", "--preset"]
+        }
+      ]
+    }
+  ]
+}

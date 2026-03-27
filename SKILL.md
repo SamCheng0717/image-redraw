@@ -1,74 +1,52 @@
 ---
 name: image-redraw
-description: 根据文字内容生成图片，使用阿里云百炼通义万象模型。支持直接输入文字、读取 Markdown 文件（兼容 douyin-scraper 输出）或自定义 prompt。当用户提到"图片生成"、"AI生图"、"重绘"、"文生图"、"内容配图"等场景时加载此技能。
+description: 医美内容改写 + 小红书图片生成。接收 douyin-scraper 抓取的笔记，用 LLM 检测医院信息并改写文案（无医院 → 二创，有医院 → 用户指定替换 + 白皮书注入），然后调用 baoyu-xhs-images 生成精美图片。当用户提到"改写图文"、"重绘配图"、"图文二创"、"医院替换"、"小红书配图"等场景时加载此技能。
 ---
 
 # image-redraw
 
-根据文字内容生成图片 —— 输入文字或 Markdown 文件，调用阿里云百炼通义万象模型，输出图片到 `output/`。
+将抖音图文笔记改写并生成小红书图片的两步流程。
 
-## ⚠️ 前置配置
-
-### 1. 安装依赖
+## 前置依赖
 
 ```bash
-pip install dashscope python-dotenv
+pip install openai python-dotenv
 ```
 
-### 2. 配置 API Key
-
-在技能目录创建 `.env`：
+`.env` 配置：
 
 ```
-DASHSCOPE_API_KEY=你的阿里云百炼API Key
+DASHSCOPE_API_KEY=你的阿里云百炼 API Key
 ```
 
-获取 API Key：[阿里云百炼控制台](https://bailian.console.aliyun.com)
-
----
-
-## 使用
+## Step 1：在终端运行 workflow.py
 
 ```bash
-# 直接输入文字
-python <skill_path>/scripts/redraw.py --text "韩国医美大实话，10条潜规则..."
-
-# 读取 Markdown 文件（自动提取 OCR 内容）
-python <skill_path>/scripts/redraw.py --file notes_韩国医美.md
-
-# 自定义 prompt
-python <skill_path>/scripts/redraw.py --prompt "简约风格信息图，白色背景..."
-
-# 生成多张
-python <skill_path>/scripts/redraw.py --text "内容" --n 4
-
-# 指定尺寸
-python <skill_path>/scripts/redraw.py --text "内容" --size 1280*720
+python <skill_path>/scripts/workflow.py --input notes_韩国医美.md
 ```
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| `--text` | 直接输入文字内容 | - |
-| `--file` | 读取文件路径（.md/.txt）| - |
-| `--prompt` | 直接指定 prompt（跳过自动转换）| - |
-| `--n` | 生成张数 | `1` |
-| `--size` | 图片尺寸 | `1024*1024` |
-| `--model` | 模型名称 | `wanx2.1-t2i-turbo` |
+处理完后输出每篇文案的 MD 文件路径和推荐预设。
 
----
+## Step 2：在 Claude Code 中生成图片
 
-## 与 douyin-scraper 配合
-
-```bash
-# 先用 douyin-scraper 采集
-python douyin-scraper/scripts/full_workflow.py --keyword "韩国医美" --count 5
-
-# 再用 image-redraw 生成配图
-python image-redraw/scripts/redraw.py --file douyin-scraper/output/notes_韩国医美_xxx.md
+```
+/baoyu-xhs-images <output_file> --preset <preset>
 ```
 
----
+推荐预设：
 
-## 输出
+- `checklist` — 干货清单（notion 风格）
+- `cute-share` — 种草分享（cute 风格）
+- `warning` — 避坑指南（bold 风格）
+- `knowledge-card` — 专业科普（notion 风格）
+- `product-review` — 项目测评（fresh 风格）
+- `tutorial` — 操作教程（chalkboard 风格）
 
-图片保存至 `output/redraw_{timestamp}_{n}.png`
+## 白皮书（可选）
+
+`config/whitepaper.md` 包含机构信息，有医院替换时自动注入（1-2 句）。
+
+## 已知限制
+
+- DashScope 不支持 `--ref` 参考图
+- workflow.py 需在终端交互运行（有 input() 询问）

@@ -163,6 +163,28 @@ def parse_notes_md(md_path: Path) -> list:
 
 # ─────────────────── 处理单篇笔记 ────────────────────
 
+def _recommend_preset(text: str) -> str:
+    """根据文案内容推荐 baoyu-xhs-images 预设"""
+    t = text.lower()
+    # 避坑/警示类
+    if any(w in t for w in ["避坑", "千万别", "注意", "警惕", "骗局", "黑幕", "后悔", "翻车"]):
+        return "warning"
+    # 干货/清单/排行
+    if any(w in t for w in ["推荐", "必备", "清单", "排行", "top", "最佳", "攻略", "秘籍"]):
+        return "checklist"
+    # 对比/测评
+    if any(w in t for w in ["对比", "vs", "测评", "区别", "哪个好", "优缺点"]):
+        return "product-review"
+    # 教程/步骤
+    if any(w in t for w in ["步骤", "教程", "怎么做", "方法", "流程", "操作"]):
+        return "tutorial"
+    # 干货知识
+    if any(w in t for w in ["原理", "成分", "科普", "为什么", "知识", "了解"]):
+        return "knowledge-card"
+    # 种草/分享（默认医美内容）
+    return "cute-share"
+
+
 def process_note(note: dict, idx: int, whitepaper: str) -> dict:
     title = note["title"][:50]
     ocr = note["ocr"]
@@ -179,7 +201,6 @@ def process_note(note: dict, idx: int, whitepaper: str) -> dict:
         "original_ocr": ocr,
         "final_text": ocr,
         "action": "direct",
-        "image_path": None,
     }
 
     # ── Step 1: 提取医院信息 ──
@@ -243,17 +264,19 @@ def process_note(note: dict, idx: int, whitepaper: str) -> dict:
             else:
                 print("  [警告] 改写失败，使用原文")
 
-    # ── Step 2: 生成图片 ──
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from render import render_card
-    filename = f"note_{idx:02d}_{datetime.now().strftime('%H%M%S')}.png"
-    img_path = render_card(
-        text=result["final_text"],
-        title=title,
-        filename=filename
+    # ── Step 2: 保存内容文件（供 baoyu-xhs-images 生成图片）──
+    content_file = OUTPUT_DIR / f"note_{idx:02d}_{datetime.now().strftime('%H%M%S')}.md"
+    content_file.write_text(
+        f"# {title}\n\n{result['final_text']}",
+        encoding="utf-8"
     )
-    result["image_path"] = img_path
-    print(f"  🖼️  图片已生成：{img_path.name}")
+    result["content_file"] = content_file
+
+    # 推荐预设
+    preset = _recommend_preset(result["final_text"])
+    result["preset"] = preset
+    print(f"  📄 内容已保存：{content_file.name}")
+    print(f"  💡 推荐图片预设：{preset}")
 
     return result
 
@@ -276,8 +299,11 @@ def generate_report(results: list) -> Path:
             f"**操作**：{r['action']}",
             f"**链接**：{r['url']}",
         ]
-        if r["image_path"]:
-            lines.append(f"**图片**：`{r['image_path']}`")
+        if r.get("content_file"):
+            lines.append(f"**内容文件**：`{r['content_file']}`")
+        if r.get("preset"):
+            lines.append(f"**图片预设**：`{r['preset']}`")
+            lines.append(f"**生成命令**：`/baoyu-xhs-images {r['content_file']} --preset {r['preset']}`")
         lines += ["", "**改写后文案**：", "", r["final_text"], "\n---"]
 
     path = OUTPUT_DIR / f"publish_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
@@ -322,8 +348,13 @@ def main():
 
     report = generate_report(results)
     print(f"\n{'='*60}")
-    print(f"✓ 完成！共 {len(results)} 篇，图片 {sum(1 for r in results if r['image_path'])} 张")
+    print(f"✓ 完成！共 {len(results)} 篇")
     print(f"发布清单：{report}")
+    print()
+    print("📸 生成图片（在 Claude Code 中运行）：")
+    for r in results:
+        if r.get("content_file") and r.get("preset"):
+            print(f"  /baoyu-xhs-images {r['content_file']} --preset {r['preset']}")
     print(f"{'='*60}")
 
 
